@@ -1,236 +1,89 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
+{% block title %}FinDocAI | Performance{% endblock %}
 
-    <meta charset="UTF-8">
+{% block content %}
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<section class="page-hero">
 
-    <title>FinDocAI | Performance</title>
+    <div class="eyebrow">
+        <span></span>
+        MODEL PERFORMANCE
+    </div>
 
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', filename='css/style.css') }}"
-    >
+    <h1>Performance of the detection model.</h1>
 
-</head>
+    <p>
+        Evaluation metrics from the trained EfficientNetV2B0
+        document tampering model.
+    </p>
 
-<body>
-
-<header class="navbar">
-
-    <div class="nav-container">
-
-        <a href="/" class="brand">
-
-            <div class="brand-icon">
-                FD
-            </div>
-
-            <div class="brand-name">
-                FinDoc<span>AI</span>
-            </div>
-
-        </a>
+</section>
 
 
-        <nav class="nav-links">
+<section class="performance-section">
 
-            <a href="/">Home</a>
+    <div class="metrics-grid">
 
-            <a href="/detect">Detect</a>
+        <div class="metric-card">
+            <strong>97.85%</strong>
+            <span>Accuracy</span>
+            <p>Overall classification accuracy on the test set.</p>
+        </div>
 
-            <a href="/how-it-works">
-                How It Works
-            </a>
+        <div class="metric-card">
+            <strong>91.43%</strong>
+            <span>Precision</span>
+            <p>
+                Proportion of predicted tampered samples
+                that were actually tampered.
+            </p>
+        </div>
 
-            <a
-                href="/performance"
-                class="active"
-            >
-                Performance
-            </a>
+        <div class="metric-card">
+            <strong>95.05%</strong>
+            <span>Recall</span>
+            <p>
+                Ability to identify tampered samples correctly.
+            </p>
+        </div>
 
-            <a href="/about">
-                About
-            </a>
+        <div class="metric-card">
+            <strong>97.80%</strong>
+            <span>AUC</span>
+            <p>
+                Area under the ROC curve measuring ranking performance.
+            </p>
+        </div>
 
-        </nav>
+        <div class="metric-card">
+            <strong>0.0877</strong>
+            <span>Loss</span>
+            <p>
+                Reported model loss from the completed training run.
+            </p>
+        </div>
 
     </div>
 
-</header>
 
-
-<main class="content-page">
-
-    <section class="page-heading">
-
-        <div class="eyebrow">
-
-            <span></span>
-
-            MODEL PERFORMANCE
-
-        </div>
-
-
-        <h1>
-            Performance of the detection model.
-        </h1>
-
-
-        <p>
-            Evaluation metrics from the trained
-            EfficientNetV2B0 document tampering model.
-        </p>
-
-    </section>
-
-
-    <section class="performance-grid">
-
-
-        <div class="performance-card">
-
-            <span>
-                ACCURACY
-            </span>
-
-            <strong>
-                97.85%
-            </strong>
-
-            <p>
-                Overall classification accuracy
-                on the test set.
-            </p>
-
-        </div>
-
-
-        <div class="performance-card">
-
-            <span>
-                PRECISION
-            </span>
-
-            <strong>
-                91.43%
-            </strong>
-
-            <p>
-                Proportion of predicted tampered
-                samples that were actually tampered.
-            </p>
-
-        </div>
-
-
-        <div class="performance-card">
-
-            <span>
-                RECALL
-            </span>
-
-            <strong>
-                95.05%
-            </strong>
-
-            <p>
-                Ability to identify tampered
-                samples correctly.
-            </p>
-
-        </div>
-
-
-        <div class="performance-card">
-
-            <span>
-                AUC
-            </span>
-
-            <strong>
-                97.80%
-            </strong>
-
-            <p>
-                Area under the ROC curve measuring
-                ranking performance.
-            </p>
-
-        </div>
-
-
-        <div class="performance-card">
-
-            <span>
-                LOSS
-            </span>
-
-            <strong>
-                0.0877
-            </strong>
-
-            <p>
-                Reported model loss from the
-                completed training run.
-            </p>
-
-        </div>
-
-
-    </section>
-
-
-    <section class="info-card">
+    <div class="interpretation">
 
         <div class="section-label">
             INTERPRETATION
         </div>
 
-        <h2>
-            What these numbers mean.
-        </h2>
+        <h2>What these numbers mean.</h2>
 
         <p>
             The model achieved high test accuracy and AUC,
-            while recall indicates strong detection of
-            tampered samples. Precision is also important
-            because it reflects how often a tampering
-            prediction is correct.
+            while recall indicates strong detection of tampered samples.
+            Precision is also important because it reflects how often
+            a tampering prediction is correct.
         </p>
-
-    </section>
-
-</main>
-
-
-<footer class="footer">
-
-    <div class="footer-container">
-
-        <div>
-
-            <strong>
-                FinDoc<span>AI</span>
-            </strong>
-
-            <p>
-                AI-powered financial document analysis.
-            </p>
-
-        </div>
 
     </div>
 
-</footer>
+</section>
 
-</body>
-
-</html>
+{% endblock %}

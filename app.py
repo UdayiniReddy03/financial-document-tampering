@@ -3,27 +3,38 @@ import uuid
 import numpy as np
 import tensorflow as tf
 
-from flask import Flask, render_template, request
-from werkzeug.utils import secure_filename
-from PIL import Image
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash
+)
 
+from PIL import Image
 import matplotlib
+
 matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+# ============================================================
+# FLASK APP
+# ============================================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__)
 
-UPLOAD_FOLDER = os.path.join(
-    BASE_DIR, "static", "uploads"
-)
+app.secret_key = "findocai-secret-key"
 
-RESULT_FOLDER = os.path.join(
-    BASE_DIR, "static", "results"
+
+# ============================================================
+# PATHS
+# ============================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
 )
 
 MODEL_PATH = os.path.join(
@@ -32,145 +43,157 @@ MODEL_PATH = os.path.join(
     "efficientnetv2b0_patch_tampering.keras"
 )
 
+UPLOAD_FOLDER = os.path.join(
+    BASE_DIR,
+    "static",
+    "uploads"
+)
+
+RESULT_FOLDER = os.path.join(
+    BASE_DIR,
+    "static",
+    "results"
+)
+
+GRADCAM_FOLDER = os.path.join(
+    BASE_DIR,
+    "static",
+    "gradcam"
+)
+
+
+os.makedirs(
+    UPLOAD_FOLDER,
+    exist_ok=True
+)
+
+os.makedirs(
+    RESULT_FOLDER,
+    exist_ok=True
+)
+
+os.makedirs(
+    GRADCAM_FOLDER,
+    exist_ok=True
+)
+
+
+# ============================================================
+# SETTINGS
+# ============================================================
+
 IMAGE_SIZE = (224, 224)
 
 ALLOWED_EXTENSIONS = {
     "png",
     "jpg",
-    "jpeg"
+    "jpeg",
+    "webp"
 }
 
-TILE_SIZE = 256
 
-TAMPERING_THRESHOLD = 0.50
-
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULT_FOLDER, exist_ok=True)
-
-
-# =========================================================
-# FLASK
-# =========================================================
-
-app = Flask(__name__)
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-
-# =========================================================
+# ============================================================
 # LOAD MODEL
-# =========================================================
+# ============================================================
 
 print("=" * 60)
-print("Loading EfficientNetV2B0 model...")
+print("Loading FinDocAI model...")
 print("=" * 60)
 
-model = tf.keras.models.load_model(MODEL_PATH)
+if not os.path.exists(MODEL_PATH):
+
+    raise FileNotFoundError(
+        f"\nModel not found:\n{MODEL_PATH}\n"
+        "Make sure the model exists inside the models folder."
+    )
+
+
+model = tf.keras.models.load_model(
+    MODEL_PATH
+)
 
 print("Model loaded successfully.")
+print("Model input:", model.input_shape)
+print("Model output:", model.output_shape)
 
 
-# Get EfficientNet backbone
-efficientnet = model.get_layer("efficientnetv2-b0")
+# ============================================================
+# GET MODEL LAYERS
+# ============================================================
 
-print("EfficientNetV2B0 found.")
-print("EfficientNet output shape:", efficientnet.output_shape)
+efficientnet = model.get_layer(
+    "efficientnetv2-b0"
+)
+
+augmentation = model.get_layer(
+    "data_augmentation"
+)
+
+global_pool = model.get_layer(
+    "global_average_pooling2d"
+)
+
+batch_norm = model.get_layer(
+    "batch_normalization"
+)
+
+dropout = model.get_layer(
+    "dropout"
+)
+
+dense = model.get_layer(
+    "dense"
+)
+
+dropout_1 = model.get_layer(
+    "dropout_1"
+)
+
+dense_1 = model.get_layer(
+    "dense_1"
+)
 
 
-# =========================================================
-# FILE VALIDATION
-# =========================================================
+print("EfficientNet layer found.")
+print(
+    "EfficientNet output:",
+    efficientnet.output.shape
+)
+
+
+# ============================================================
+# ALLOWED FILE
+# ============================================================
 
 def allowed_file(filename):
 
-    return (
-        "." in filename
-        and filename.rsplit(".", 1)[1].lower()
-        in ALLOWED_EXTENSIONS
-    )
+    if "." not in filename:
+        return False
+
+    extension = filename.rsplit(
+        ".",
+        1
+    )[1].lower()
+
+    return extension in ALLOWED_EXTENSIONS
 
 
-# =========================================================
-# CREATE DOCUMENT TILES
-# =========================================================
+# ============================================================
+# LOAD IMAGE
+# ============================================================
 
-def create_tiles(image):
+def prepare_image(image_path):
 
-    width, height = image.size
+    image = Image.open(
+        image_path
+    ).convert("RGB")
 
-    tiles = []
-    positions = []
-
-    # Small image
-    if width <= TILE_SIZE and height <= TILE_SIZE:
-
-        tiles.append(image.copy())
-
-        positions.append(
-            (0, 0, width, height)
-        )
-
-        return tiles, positions
-
-
-    x_positions = list(
-        range(0, width, TILE_SIZE)
-    )
-
-    y_positions = list(
-        range(0, height, TILE_SIZE)
-    )
-
-
-    for y in y_positions:
-
-        for x in x_positions:
-
-            x2 = min(
-                x + TILE_SIZE,
-                width
-            )
-
-            y2 = min(
-                y + TILE_SIZE,
-                height
-            )
-
-            tile = image.crop(
-                (x, y, x2, y2)
-            )
-
-            if (
-                tile.width < 32
-                or tile.height < 32
-            ):
-                continue
-
-            tiles.append(tile)
-
-            positions.append(
-                (x, y, x2, y2)
-            )
-
-
-    return tiles, positions
-
-
-# =========================================================
-# PREPARE IMAGE
-# =========================================================
-
-def prepare_image(image):
-
-    image = image.convert("RGB")
-
-    image = image.resize(
+    resized = image.resize(
         IMAGE_SIZE
     )
 
-    array = np.asarray(
-        image,
+    array = np.array(
+        resized,
         dtype=np.float32
     )
 
@@ -179,96 +202,192 @@ def prepare_image(image):
         axis=0
     )
 
-    return tf.convert_to_tensor(
+    return image, tf.convert_to_tensor(
         array,
         dtype=tf.float32
     )
 
 
-# =========================================================
-# PREDICT TILE
-# =========================================================
+# ============================================================
+# MODEL FORWARD PASS
+# ============================================================
 
-def predict_tile(tile):
+def forward_pass(image):
 
-    image = prepare_image(tile)
-
-    prediction = model.predict(
+    # Data augmentation
+    augmented = augmentation(
         image,
-        verbose=0
+        training=False
     )
 
-    return float(
-        prediction[0][0]
+    # EfficientNet
+    features = efficientnet(
+        augmented,
+        training=False
     )
 
+    # Classifier
+    x = global_pool(
+        features
+    )
 
-# =========================================================
+    x = batch_norm(
+        x,
+        training=False
+    )
+
+    x = dropout(
+        x,
+        training=False
+    )
+
+    x = dense(
+        x
+    )
+
+    x = dropout_1(
+        x,
+        training=False
+    )
+
+    prediction = dense_1(
+        x
+    )
+
+    return features, prediction
+
+
+# ============================================================
+# NORMAL PREDICTION
+# ============================================================
+
+def predict_image(image_path):
+
+    original, image = prepare_image(
+        image_path
+    )
+
+    features, prediction = forward_pass(
+        image
+    )
+
+    probability = float(
+        prediction.numpy()[0][0]
+    )
+
+    if probability >= 0.5:
+
+        label = "Tampered"
+
+        confidence = probability
+
+    else:
+
+        label = "Genuine"
+
+        confidence = 1.0 - probability
+
+
+    return {
+        "label": label,
+        "tampering_probability": probability,
+        "confidence": confidence,
+        "original": original
+    }
+
+
+# ============================================================
 # GRAD-CAM
-# =========================================================
+# ============================================================
 
-def generate_gradcam(tile):
+def generate_gradcam(image_path):
 
-    image = prepare_image(tile)
+    print()
+    print("=" * 60)
+    print("Generating Grad-CAM...")
+    print("Image:", image_path)
+    print("=" * 60)
+
+    original, image = prepare_image(
+        image_path
+    )
+
+
+    # --------------------------------------------------------
+    # GRADIENT TAPE
+    # --------------------------------------------------------
 
     with tf.GradientTape() as tape:
 
-        # Augmentation layer
-        augmented = model.layers[1](
+        # Augmentation
+        augmented = augmentation(
             image,
             training=False
         )
 
-        # EfficientNet feature maps
+        # EfficientNet feature map
         conv_outputs = efficientnet(
             augmented,
             training=False
         )
 
-        # Classification head
-        x = model.get_layer(
-            "global_average_pooling2d"
-        )(conv_outputs)
+        # Watch feature map
+        tape.watch(
+            conv_outputs
+        )
 
-        x = model.get_layer(
-            "batch_normalization"
-        )(x)
+        # Classifier
+        x = global_pool(
+            conv_outputs
+        )
 
-        x = model.get_layer(
-            "dropout"
-        )(
+        x = batch_norm(
             x,
             training=False
         )
 
-        x = model.get_layer(
-            "dense"
-        )(x)
-
-        x = model.get_layer(
-            "dropout_1"
-        )(
+        x = dropout(
             x,
             training=False
         )
 
-        predictions = model.get_layer(
-            "dense_1"
-        )(x)
+        x = dense(
+            x
+        )
 
-        probability = predictions[:, 0]
+        x = dropout_1(
+            x,
+            training=False
+        )
+
+        predictions = dense_1(
+            x
+        )
+
+        # Tampered class
+        tampered_probability = predictions[:, 0]
+
+
+    # --------------------------------------------------------
+    # GRADIENTS
+    # --------------------------------------------------------
 
     gradients = tape.gradient(
-        probability,
+        tampered_probability,
         conv_outputs
     )
+
 
     if gradients is None:
 
         raise RuntimeError(
-            "Grad-CAM gradients could not be generated."
+            "Could not calculate Grad-CAM gradients."
         )
 
+
+    # --------------------------------------------------------
+    # GLOBAL AVERAGE POOLING
+    # --------------------------------------------------------
 
     pooled_gradients = tf.reduce_mean(
         gradients,
@@ -281,11 +400,20 @@ def generate_gradcam(tile):
     pooled_gradients = pooled_gradients[0]
 
 
+    # --------------------------------------------------------
+    # WEIGHT FEATURE MAPS
+    # --------------------------------------------------------
+
     heatmap = tf.reduce_sum(
-        conv_outputs * pooled_gradients,
+        conv_outputs *
+        pooled_gradients,
         axis=-1
     )
 
+
+    # --------------------------------------------------------
+    # RELU
+    # --------------------------------------------------------
 
     heatmap = tf.maximum(
         heatmap,
@@ -293,18 +421,24 @@ def generate_gradcam(tile):
     )
 
 
+    # --------------------------------------------------------
+    # NORMALIZE
+    # --------------------------------------------------------
+
     max_value = tf.reduce_max(
         heatmap
     )
-
 
     heatmap = heatmap / (
         max_value + 1e-8
     )
 
-
     heatmap = heatmap.numpy()
 
+
+    # --------------------------------------------------------
+    # RESIZE HEATMAP
+    # --------------------------------------------------------
 
     heatmap_image = Image.fromarray(
         np.uint8(
@@ -312,44 +446,81 @@ def generate_gradcam(tile):
         )
     )
 
-
     heatmap_image = heatmap_image.resize(
-        tile.size
+        original.size
+    )
+
+    heatmap = np.array(
+        heatmap_image
+    ) / 255.0
+
+
+    # --------------------------------------------------------
+    # PREDICTION
+    # --------------------------------------------------------
+
+    probability = float(
+        tampered_probability.numpy()[0]
     )
 
 
-    heatmap = (
-        np.asarray(
-            heatmap_image,
-            dtype=np.float32
-        ) / 255.0
+    if probability >= 0.5:
+
+        label = "Tampered"
+
+    else:
+
+        label = "Genuine"
+
+
+    return (
+        original,
+        heatmap,
+        label,
+        probability
     )
 
 
-    return heatmap
+# ============================================================
+# SAVE GRAD-CAM IMAGE
+# ============================================================
+
+def save_gradcam(
+    image_path,
+    output_filename
+):
+
+    (
+        original,
+        heatmap,
+        prediction,
+        probability
+    ) = generate_gradcam(
+        image_path
+    )
 
 
-# =========================================================
-# CREATE GRAD-CAM IMAGE
-# =========================================================
+    # --------------------------------------------------------
+    # ORIGINAL IMAGE
+    # --------------------------------------------------------
 
-def create_gradcam_image(tile, heatmap):
-
-    tile_array = (
-        np.asarray(tile)
+    original_array = (
+        np.array(original)
         / 255.0
     )
 
 
-    fig = plt.figure(
-        figsize=(8, 8)
-    )
+    # --------------------------------------------------------
+    # CREATE FIGURE
+    # --------------------------------------------------------
 
+    plt.figure(
+        figsize=(10, 7)
+    )
 
     plt.imshow(
-        tile_array
+        original_array
     )
-
 
     plt.imshow(
         heatmap,
@@ -357,66 +528,433 @@ def create_gradcam_image(tile, heatmap):
         cmap="jet"
     )
 
-
-    plt.axis("off")
-
-
-    filename = (
-        "gradcam_"
-        + uuid.uuid4().hex
-        + ".png"
+    plt.axis(
+        "off"
     )
 
 
+    plt.title(
+        f"Prediction: {prediction} | "
+        f"Tampering Probability: "
+        f"{probability:.2%}"
+    )
+
+
+    # --------------------------------------------------------
+    # SAVE
+    # --------------------------------------------------------
+
     output_path = os.path.join(
-        RESULT_FOLDER,
-        filename
+        GRADCAM_FOLDER,
+        output_filename
     )
 
 
     plt.savefig(
         output_path,
         bbox_inches="tight",
-        pad_inches=0,
         dpi=180
     )
 
-
-    plt.close(fig)
-
-
-    return filename
+    plt.close()
 
 
-# =========================================================
-# HOME
-# =========================================================
+    print()
+    print("=" * 60)
+    print("GRAD-CAM RESULT")
+    print("=" * 60)
+
+    print(
+        "Prediction:",
+        prediction
+    )
+
+    print(
+        "Tampering probability:",
+        f"{probability:.2%}"
+    )
+
+    print(
+        "Saved:",
+        output_path
+    )
+
+
+    return (
+        output_filename,
+        prediction,
+        probability
+    )
+
+
+# ============================================================
+# HOME PAGE
+# ============================================================
 
 @app.route("/")
-def home():
+def index():
 
     return render_template(
         "index.html"
     )
 
 
-# =========================================================
-# DETECT
-# =========================================================
+# ============================================================
+# DETECT PAGE
+# ============================================================
 
-@app.route("/detect")
+@app.route(
+    "/detect",
+    methods=["GET", "POST"]
+)
 def detect():
 
-    return render_template(
-        "detect.html"
+    # --------------------------------------------------------
+    # GET
+    # --------------------------------------------------------
+
+    if request.method == "GET":
+
+        return render_template(
+            "detect.html"
+        )
+
+
+    # --------------------------------------------------------
+    # POST
+    # --------------------------------------------------------
+
+    if "document" not in request.files:
+
+        flash(
+            "Please select a document."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    file = request.files[
+        "document"
+    ]
+
+
+    if file.filename == "":
+
+        flash(
+            "Please select an image."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    if not allowed_file(
+        file.filename
+    ):
+
+        flash(
+            "Only PNG, JPG, JPEG and WEBP files are supported."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    # --------------------------------------------------------
+    # UNIQUE FILENAME
+    # --------------------------------------------------------
+
+    extension = file.filename.rsplit(
+        ".",
+        1
+    )[1].lower()
+
+
+    filename = (
+        uuid.uuid4().hex
+        + "."
+        + extension
     )
 
 
-# =========================================================
-# HOW IT WORKS
-# =========================================================
+    upload_path = os.path.join(
+        UPLOAD_FOLDER,
+        filename
+    )
 
-@app.route("/how-it-works")
+
+    file.save(
+        upload_path
+    )
+
+
+    print()
+    print("=" * 60)
+    print("DOCUMENT RECEIVED")
+    print("=" * 60)
+
+    print(
+        "Saved:",
+        upload_path
+    )
+
+
+    # --------------------------------------------------------
+    # PREDICTION + GRAD-CAM
+    # --------------------------------------------------------
+
+    try:
+
+        (
+            gradcam_filename,
+            prediction,
+            probability
+        ) = save_gradcam(
+            upload_path,
+            "gradcam_" + filename
+        )
+
+
+    except Exception as e:
+
+        print()
+        print("=" * 60)
+        print("GRAD-CAM ERROR")
+        print("=" * 60)
+
+        print(e)
+
+        flash(
+            "Analysis failed. Check the terminal for details."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    # --------------------------------------------------------
+    # RESULT DATA
+    # --------------------------------------------------------
+
+    confidence = (
+        probability
+        if prediction == "Tampered"
+        else 1.0 - probability
+    )
+
+
+    original_url = url_for(
+        "static",
+        filename="uploads/" + filename
+    )
+
+
+    gradcam_url = url_for(
+        "static",
+        filename="gradcam/" + gradcam_filename
+    )
+
+
+    # --------------------------------------------------------
+    # RESULT PAGE
+    # --------------------------------------------------------
+
+    return render_template(
+        "result.html",
+
+        image_url=original_url,
+
+        original_image=original_url,
+
+        gradcam_url=gradcam_url,
+
+        gradcam_image=gradcam_url,
+
+        prediction=prediction,
+
+        result=prediction,
+
+        label=prediction,
+
+        probability=probability,
+
+        tampering_probability=probability,
+
+        confidence=confidence,
+
+        confidence_percent=confidence * 100,
+
+        filename=filename
+    )
+
+
+# ============================================================
+# RESULT ROUTE
+# ============================================================
+
+@app.route(
+    "/result",
+    methods=["GET", "POST"]
+)
+def result():
+
+    # If someone manually opens /result,
+    # send them to Detect instead of showing 404.
+
+    if request.method == "GET":
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    # If a form submits directly to /result,
+    # process it exactly like /detect.
+
+    if "document" not in request.files:
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    file = request.files[
+        "document"
+    ]
+
+
+    if file.filename == "":
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    if not allowed_file(
+        file.filename
+    ):
+
+        flash(
+            "Invalid image format."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    extension = file.filename.rsplit(
+        ".",
+        1
+    )[1].lower()
+
+
+    filename = (
+        uuid.uuid4().hex
+        + "."
+        + extension
+    )
+
+
+    upload_path = os.path.join(
+        UPLOAD_FOLDER,
+        filename
+    )
+
+
+    file.save(
+        upload_path
+    )
+
+
+    try:
+
+        (
+            gradcam_filename,
+            prediction,
+            probability
+        ) = save_gradcam(
+            upload_path,
+            "gradcam_" + filename
+        )
+
+
+    except Exception as e:
+
+        print(
+            "Error:",
+            e
+        )
+
+        flash(
+            "Could not analyze the document."
+        )
+
+        return redirect(
+            url_for("detect")
+        )
+
+
+    confidence = (
+        probability
+        if prediction == "Tampered"
+        else 1.0 - probability
+    )
+
+
+    original_url = url_for(
+        "static",
+        filename="uploads/" + filename
+    )
+
+
+    gradcam_url = url_for(
+        "static",
+        filename="gradcam/" + gradcam_filename
+    )
+
+
+    return render_template(
+        "result.html",
+
+        image_url=original_url,
+
+        original_image=original_url,
+
+        gradcam_url=gradcam_url,
+
+        gradcam_image=gradcam_url,
+
+        prediction=prediction,
+
+        result=prediction,
+
+        label=prediction,
+
+        probability=probability,
+
+        tampering_probability=probability,
+
+        confidence=confidence,
+
+        confidence_percent=confidence * 100,
+
+        filename=filename
+    )
+
+
+# ============================================================
+# HOW IT WORKS
+# ============================================================
+
+@app.route(
+    "/how-it-works"
+)
 def how_it_works():
 
     return render_template(
@@ -424,11 +962,24 @@ def how_it_works():
     )
 
 
-# =========================================================
-# PERFORMANCE
-# =========================================================
+# Also support underscore URL
+@app.route(
+    "/how_it_works"
+)
+def how_it_works_alt():
 
-@app.route("/performance")
+    return render_template(
+        "how_it_works.html"
+    )
+
+
+# ============================================================
+# PERFORMANCE
+# ============================================================
+
+@app.route(
+    "/performance"
+)
 def performance():
 
     return render_template(
@@ -436,11 +987,13 @@ def performance():
     )
 
 
-# =========================================================
+# ============================================================
 # ABOUT
-# =========================================================
+# ============================================================
 
-@app.route("/about")
+@app.route(
+    "/about"
+)
 def about():
 
     return render_template(
@@ -448,247 +1001,135 @@ def about():
     )
 
 
-# =========================================================
-# PREDICT
-# =========================================================
+# ============================================================
+# UPLOAD ALIAS
+# ============================================================
 
 @app.route(
-    "/predict",
-    methods=["POST"]
+    "/upload",
+    methods=["GET", "POST"]
 )
-def predict():
+def upload():
 
-    if "document" not in request.files:
+    if request.method == "GET":
 
-        return render_template(
-            "detect.html",
-            error="Please upload or capture a document."
+        return redirect(
+            url_for("detect")
         )
 
 
-    file = request.files["document"]
-
-
-    if file.filename == "":
-
-        return render_template(
-            "detect.html",
-            error="Please select or capture an image."
-        )
-
-
-    if not allowed_file(file.filename):
-
-        return render_template(
-            "detect.html",
-            error="Only PNG, JPG and JPEG images are supported."
-        )
-
-
-    # -----------------------------------------------------
-    # SAVE FILE
-    # -----------------------------------------------------
-
-    original_name = secure_filename(
-        file.filename
-    )
-
-
-    unique_name = (
-        uuid.uuid4().hex
-        + "_"
-        + original_name
-    )
-
-
-    upload_path = os.path.join(
-        UPLOAD_FOLDER,
-        unique_name
-    )
-
-
-    file.save(upload_path)
-
-
-    # -----------------------------------------------------
-    # OPEN IMAGE
-    # -----------------------------------------------------
-
-    try:
-
-        document = Image.open(
-            upload_path
-        ).convert("RGB")
-
-    except Exception:
-
-        return render_template(
-            "detect.html",
-            error="The uploaded image could not be read."
-        )
-
-
-    # -----------------------------------------------------
-    # CREATE TILES
-    # -----------------------------------------------------
-
-    tiles, positions = create_tiles(
-        document
-    )
-
-
-    if len(tiles) == 0:
-
-        return render_template(
-            "detect.html",
-            error="No usable document regions were found."
-        )
-
-
-    # -----------------------------------------------------
-    # PREDICT
-    # -----------------------------------------------------
-
-    predictions = []
-
-
-    for tile in tiles:
-
-        probability = predict_tile(
-            tile
-        )
-
-        predictions.append(
-            probability
-        )
-
-
-    predictions = np.asarray(
-        predictions
-    )
-
-
-    # -----------------------------------------------------
-    # STATISTICS
-    # -----------------------------------------------------
-
-    highest_index = int(
-        np.argmax(predictions)
-    )
-
-
-    highest_probability = float(
-        predictions[highest_index]
-    )
-
-
-    average_probability = float(
-        np.mean(predictions)
-    )
-
-
-    flagged_regions = int(
-        np.sum(
-            predictions >= TAMPERING_THRESHOLD
-        )
-    )
-
-
-    # -----------------------------------------------------
-    # FINAL RESULT
-    # -----------------------------------------------------
-
-    if highest_probability >= TAMPERING_THRESHOLD:
-
-        result = "Tampered"
-
-        confidence = highest_probability
-
-    else:
-
-        result = "Genuine"
-
-        confidence = 1.0 - highest_probability
-
-
-    # -----------------------------------------------------
-    # GRAD-CAM
-    # -----------------------------------------------------
-
-    selected_tile = tiles[
-        highest_index
-    ]
-
-
-    try:
-
-        heatmap = generate_gradcam(
-            selected_tile
-        )
-
-        gradcam_filename = create_gradcam_image(
-            selected_tile,
-            heatmap
-        )
-
-        gradcam_url = (
-            "/static/results/"
-            + gradcam_filename
-        )
-
-    except Exception as e:
-
-        print(
-            "Grad-CAM error:",
-            e
-        )
-
-        gradcam_url = None
-
-
-    # -----------------------------------------------------
-    # RESULT
-    # -----------------------------------------------------
-
-    return render_template(
-        "result.html",
-
-        result=result,
-
-        confidence=round(
-            confidence * 100,
-            2
-        ),
-
-        highest_score=round(
-            highest_probability * 100,
-            2
-        ),
-
-        average_score=round(
-            average_probability * 100,
-            2
-        ),
-
-        regions=len(tiles),
-
-        flagged_regions=flagged_regions,
-
-        original_image=(
-            "/static/uploads/"
-            + unique_name
-        ),
-
-        gradcam_image=gradcam_url
-    )
-
-
-# =========================================================
+    return detect()
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.route(
+    "/health"
+)
+def health():
+
+    return {
+        "status": "running",
+        "model": "loaded",
+        "model_path": MODEL_PATH
+    }
+
+
+# ============================================================
+# ERROR HANDLERS
+# ============================================================
+
+@app.errorhandler(404)
+def page_not_found(error):
+
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>FinDocAI - Page Not Found</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 80px;
+                background: #f5f7fb;
+                color: #14264d;
+            }
+
+            h1 {
+                font-size: 60px;
+                margin-bottom: 10px;
+            }
+
+            a {
+                display: inline-block;
+                margin-top: 20px;
+                padding: 14px 25px;
+                background: #3567d6;
+                color: white;
+                text-decoration: none;
+                border-radius: 8px;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <h1>404</h1>
+
+        <h2>Page not found</h2>
+
+        <p>
+            The requested page does not exist.
+        </p>
+
+        <a href="/">
+            Go to FinDocAI Home
+        </a>
+
+    </body>
+    </html>
+    """, 404
+
+
+# ============================================================
 # RUN
-# =========================================================
+# ============================================================
 
 if __name__ == "__main__":
 
+    print()
+    print("=" * 60)
+    print("FINdocAI SERVER")
+    print("=" * 60)
+
+    print(
+        "Model:",
+        MODEL_PATH
+    )
+
+    print(
+        "Upload folder:",
+        UPLOAD_FOLDER
+    )
+
+    print()
+    print(
+        "Open in browser:"
+    )
+
+    print(
+        "http://127.0.0.1:5000"
+    )
+
+    print("=" * 60)
+    print()
+
+
     app.run(
+        host="127.0.0.1",
+        port=5000,
         debug=True
     )

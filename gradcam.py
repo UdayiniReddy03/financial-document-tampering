@@ -6,13 +6,11 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 
-# =========================================================
+# ============================================================
 # SETTINGS
-# =========================================================
+# ============================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 MODEL_PATH = os.path.join(
     BASE_DIR,
@@ -22,59 +20,164 @@ MODEL_PATH = os.path.join(
 
 IMAGE_SIZE = (224, 224)
 
-TARGET_LAYER = "efficientnetv2-b0"
+TARGET_LAYER_NAME = "efficientnetv2-b0"
+
+OUTPUT_DIR = os.path.join(
+    BASE_DIR,
+    "gradcam_results"
+)
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-# =========================================================
+# ============================================================
 # LOAD MODEL
-# =========================================================
+# ============================================================
 
-print("Loading model...")
+print("=" * 50)
+print("Loading Grad-CAM model...")
+print("=" * 50)
+
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(
+        f"\nModel not found:\n{MODEL_PATH}\n"
+    )
 
 model = tf.keras.models.load_model(
-    MODEL_PATH
+    MODEL_PATH,
+    compile=False
 )
 
-print("Model loaded.")
+print("Model loaded successfully.")
+print("Model input:", model.input_shape)
+print("Model output:", model.output_shape)
 
 
-# =========================================================
-# GET EFFICIENTNET MODEL
-# =========================================================
+# ============================================================
+# FIND TARGET EFFICIENTNET LAYER
+# ============================================================
 
-efficientnet = model.get_layer(
-    TARGET_LAYER
+target_layer = model.get_layer(
+    TARGET_LAYER_NAME
+)
+
+print()
+print("Candidate layer:", target_layer.name)
+print("Output shape:", target_layer.output_shape)
+
+print()
+print("=" * 50)
+print("Grad-CAM target layer:")
+print(target_layer.name)
+print("Output shape:", target_layer.output_shape)
+print("=" * 50)
+
+
+# ============================================================
+# FIND CLASSIFIER LAYERS
+# ============================================================
+
+print()
+print("Model layers:")
+
+for i, layer in enumerate(model.layers):
+    print(
+        i,
+        layer.name,
+        layer.output_shape
+        if hasattr(layer, "output_shape")
+        else ""
+    )
+
+
+# ============================================================
+# HELPER FUNCTION
+# ============================================================
+
+def get_layer_by_name(name):
+
+    try:
+        return model.get_layer(name)
+
+    except Exception:
+
+        return None
+
+
+# ============================================================
+# GET CLASSIFIER LAYERS
+# ============================================================
+
+global_pool = get_layer_by_name(
+    "global_average_pooling2d"
+)
+
+batch_norm = get_layer_by_name(
+    "batch_normalization"
+)
+
+dropout = get_layer_by_name(
+    "dropout"
+)
+
+dense = get_layer_by_name(
+    "dense"
+)
+
+dropout_1 = get_layer_by_name(
+    "dropout_1"
+)
+
+dense_1 = get_layer_by_name(
+    "dense_1"
+)
+
+
+print()
+print("Classifier layers found:")
+
+print(
+    "global_average_pooling2d:",
+    global_pool is not None
 )
 
 print(
-    "EfficientNetV2B0 found."
+    "batch_normalization:",
+    batch_norm is not None
 )
-
-
-# =========================================================
-# GET LAST CONVOLUTIONAL OUTPUT
-# =========================================================
-
-# EfficientNetV2B0 outputs a 7x7x1280 feature map.
-# This is the spatial feature map used by Grad-CAM.
 
 print(
-    "EfficientNet output shape:",
-    efficientnet.output.shape
+    "dropout:",
+    dropout is not None
+)
+
+print(
+    "dense:",
+    dense is not None
+)
+
+print(
+    "dropout_1:",
+    dropout_1 is not None
+)
+
+print(
+    "dense_1:",
+    dense_1 is not None
 )
 
 
-# =========================================================
-# GRAD-CAM
-# =========================================================
+# ============================================================
+# PREPROCESS IMAGE
+# ============================================================
 
-def generate_gradcam(
-    image_path
-):
+def load_image(image_path):
 
-    # -----------------------------------------------------
-    # Load image
-    # -----------------------------------------------------
+    if not os.path.exists(image_path):
+
+        raise FileNotFoundError(
+            f"Image not found:\n{image_path}"
+        )
 
     original = Image.open(
         image_path
@@ -84,7 +187,7 @@ def generate_gradcam(
         IMAGE_SIZE
     )
 
-    image = np.array(
+    image = np.asarray(
         resized,
         dtype=np.float32
     )
@@ -93,92 +196,192 @@ def generate_gradcam(
         image,
         axis=0
     )
+
     image = tf.convert_to_tensor(
-    image,
-    dtype=tf.float32
-)
+        image,
+        dtype=tf.float32
+    )
 
-    # -----------------------------------------------------
-    # Forward pass through complete model
-    # -----------------------------------------------------
+    return original, image
 
-    with tf.GradientTape(
-        persistent=True
-    ) as tape:
 
-        # Watch the input
-        tape.watch(image)
+# ============================================================
+# MANUAL FORWARD PASS
+# ============================================================
 
-        # Pass through augmentation
-        augmented = model.layers[1](
-            image,
+def forward_pass(image):
+
+    """
+    Instead of creating a separate Grad-CAM Model,
+    we manually pass the image through the same layers.
+
+    This avoids the Keras 3 Functional graph KeyError.
+    """
+
+    x = image
+
+    # --------------------------------------------------------
+    # DATA AUGMENTATION
+    # --------------------------------------------------------
+
+    augmentation = get_layer_by_name(
+        "data_augmentation"
+    )
+
+    if augmentation is not None:
+
+        x = augmentation(
+            x,
             training=False
         )
 
-        # Pass through EfficientNet
-        conv_outputs = efficientnet(
-            augmented,
+    # --------------------------------------------------------
+    # EFFICIENTNET
+    # --------------------------------------------------------
+
+    conv_outputs = target_layer(
+        x,
+        training=False
+    )
+
+    # --------------------------------------------------------
+    # CLASSIFIER
+    # --------------------------------------------------------
+
+    x = conv_outputs
+
+    if global_pool is not None:
+
+        x = global_pool(x)
+
+    if batch_norm is not None:
+
+        x = batch_norm(
+            x,
             training=False
         )
 
-        # Continue through classifier
-        x = model.get_layer(
-            "global_average_pooling2d"
-        )(conv_outputs)
+    if dropout is not None:
 
-        x = model.get_layer(
-            "batch_normalization"
-        )(x)
+        x = dropout(
+            x,
+            training=False
+        )
 
-        x = model.get_layer(
-            "dropout"
-        )(x, training=False)
+    if dense is not None:
 
-        x = model.get_layer(
-            "dense"
-        )(x)
+        x = dense(x)
 
-        x = model.get_layer(
-            "dropout_1"
-        )(x, training=False)
+    if dropout_1 is not None:
 
-        predictions = model.get_layer(
-            "dense_1"
-        )(x)
+        x = dropout_1(
+            x,
+            training=False
+        )
+
+    if dense_1 is not None:
+
+        predictions = dense_1(x)
+
+    else:
+
+        # fallback
+        predictions = x
+
+    return conv_outputs, predictions
 
 
-        # Probability of tampered class
+# ============================================================
+# GENERATE GRAD-CAM
+# ============================================================
+
+def generate_gradcam(image_path):
+
+    print()
+    print("=" * 50)
+    print("Generating Grad-CAM...")
+    print(
+        "Image:",
+        image_path
+    )
+    print("=" * 50)
+
+    original, image = load_image(
+        image_path
+    )
+
+    # --------------------------------------------------------
+    # GRADIENT TAPE
+    # --------------------------------------------------------
+
+    with tf.GradientTape() as tape:
+
+        conv_outputs, predictions = forward_pass(
+            image
+        )
+
+        print(
+            "Feature map shape:",
+            conv_outputs.shape
+        )
+
+        print(
+            "Prediction shape:",
+            predictions.shape
+        )
+
+        # ----------------------------------------------------
+        # TAMpered probability
+        # ----------------------------------------------------
+
+        # Model output is (None, 1)
         probability = predictions[:, 0]
 
-
-    # -----------------------------------------------------
-    # Calculate gradients
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # CALCULATE GRADIENTS
+    # --------------------------------------------------------
 
     gradients = tape.gradient(
         probability,
         conv_outputs
     )
 
+    if gradients is None:
 
-    # -----------------------------------------------------
-    # Global average pooling
-    # -----------------------------------------------------
+        raise RuntimeError(
+            """
+Gradients are None.
+
+The model is not connected correctly
+to the EfficientNet feature layer.
+"""
+        )
+
+    print(
+        "Gradient shape:",
+        gradients.shape
+    )
+
+    # --------------------------------------------------------
+    # GLOBAL AVERAGE POOLING
+    # --------------------------------------------------------
 
     pooled_gradients = tf.reduce_mean(
         gradients,
         axis=(1, 2)
     )
 
+    # --------------------------------------------------------
+    # REMOVE BATCH DIMENSION
+    # --------------------------------------------------------
 
     conv_outputs = conv_outputs[0]
 
     pooled_gradients = pooled_gradients[0]
 
-
-    # -----------------------------------------------------
-    # Weight feature maps
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # WEIGHT FEATURE MAPS
+    # --------------------------------------------------------
 
     heatmap = tf.reduce_sum(
         conv_outputs *
@@ -186,35 +389,32 @@ def generate_gradcam(
         axis=-1
     )
 
-
-    # -----------------------------------------------------
-    # ReLU
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # RELU
+    # --------------------------------------------------------
 
     heatmap = tf.maximum(
         heatmap,
         0
     )
 
-
-    # -----------------------------------------------------
-    # Normalize
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # NORMALIZE
+    # --------------------------------------------------------
 
     max_value = tf.reduce_max(
         heatmap
     )
 
     heatmap = heatmap / (
-        max_value + 1e-8
+        max_value + tf.keras.backend.epsilon()
     )
 
     heatmap = heatmap.numpy()
 
-
-    # -----------------------------------------------------
-    # Resize heatmap
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # RESIZE HEATMAP
+    # --------------------------------------------------------
 
     heatmap_image = Image.fromarray(
         np.uint8(
@@ -223,17 +423,18 @@ def generate_gradcam(
     )
 
     heatmap_image = heatmap_image.resize(
-        original.size
+        original.size,
+        Image.Resampling.BILINEAR
     )
 
-    heatmap = np.array(
-        heatmap_image
+    heatmap = np.asarray(
+        heatmap_image,
+        dtype=np.float32
     ) / 255.0
 
-
-    # -----------------------------------------------------
-    # Prediction
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # PREDICTION
+    # --------------------------------------------------------
 
     probability_value = float(
         probability.numpy()[0]
@@ -247,7 +448,6 @@ def generate_gradcam(
 
         prediction = "Genuine"
 
-
     return (
         original,
         heatmap,
@@ -256,13 +456,11 @@ def generate_gradcam(
     )
 
 
-# =========================================================
-# DISPLAY GRAD-CAM
-# =========================================================
+# ============================================================
+# SAVE GRAD-CAM
+# ============================================================
 
-def show_gradcam(
-    image_path
-):
+def save_gradcam(image_path):
 
     (
         original,
@@ -273,19 +471,21 @@ def show_gradcam(
         image_path
     )
 
+    # --------------------------------------------------------
+    # ORIGINAL IMAGE
+    # --------------------------------------------------------
 
-    original_array = (
-        np.array(original)
-        / 255.0
-    )
+    original_array = np.asarray(
+        original,
+        dtype=np.float32
+    ) / 255.0
 
-
-    # -----------------------------------------------------
-    # Plot
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # CREATE FIGURE
+    # --------------------------------------------------------
 
     plt.figure(
-        figsize=(10, 6)
+        figsize=(10, 8)
     )
 
     plt.imshow(
@@ -298,40 +498,36 @@ def show_gradcam(
         cmap="jet"
     )
 
-    plt.axis(
-        "off"
-    )
+    plt.axis("off")
 
     plt.title(
-        f"Prediction: {prediction} "
-        f"({probability:.2%})"
+        f"Prediction: {prediction} | "
+        f"Tampering Probability: {probability:.2%}",
+        fontsize=14
     )
 
+    plt.tight_layout()
 
-    # -----------------------------------------------------
-    # Save
-    # -----------------------------------------------------
-
-    output_dir = os.path.join(
-        BASE_DIR,
-        "gradcam_results"
-    )
-
-    os.makedirs(
-        output_dir,
-        exist_ok=True
-    )
-
+    # --------------------------------------------------------
+    # OUTPUT FILE
+    # --------------------------------------------------------
 
     filename = os.path.basename(
         image_path
     )
 
-    output_path = os.path.join(
-        output_dir,
-        f"gradcam_{filename}"
+    name, ext = os.path.splitext(
+        filename
     )
 
+    output_path = os.path.join(
+        OUTPUT_DIR,
+        f"gradcam_{name}.png"
+    )
+
+    # --------------------------------------------------------
+    # SAVE
+    # --------------------------------------------------------
 
     plt.savefig(
         output_path,
@@ -339,12 +535,12 @@ def show_gradcam(
         dpi=200
     )
 
-    plt.show()
+    plt.close()
 
-
-    print("\n==============================")
+    print()
+    print("=" * 50)
     print("GRAD-CAM RESULT")
-    print("==============================")
+    print("=" * 50)
 
     print(
         f"Prediction: {prediction}"
@@ -359,13 +555,18 @@ def show_gradcam(
         f"Saved to:\n{output_path}"
     )
 
+    print("=" * 50)
 
-# =========================================================
-# MAIN
-# =========================================================
+    return output_path
 
-if __name__ == "__main__":
 
+# ============================================================
+# FIND TEST IMAGE
+# ============================================================
+
+def find_test_image():
+
+    # Your actual folder
     test_folder = os.path.join(
         BASE_DIR,
         "patches",
@@ -373,37 +574,122 @@ if __name__ == "__main__":
         "tampered"
     )
 
+    print()
+    print(
+        "Looking for test images in:"
+    )
+
+    print(
+        test_folder
+    )
+
+    if not os.path.exists(
+        test_folder
+    ):
+
+        raise FileNotFoundError(
+            f"""
+Test folder not found:
+
+{test_folder}
+
+Make sure your project contains:
+
+patches/
+    test/
+        tampered/
+"""
+        )
+
+    valid_extensions = (
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".webp"
+    )
 
     files = [
 
-        f for f in os.listdir(
+        f
+
+        for f in os.listdir(
             test_folder
         )
 
         if f.lower().endswith(
-            ".png"
+            valid_extensions
         )
-    ]
 
+    ]
 
     if not files:
 
         raise FileNotFoundError(
-            "No tampered patches found."
+            f"""
+No image files found in:
+
+{test_folder}
+"""
         )
 
+    files.sort()
 
     image_path = os.path.join(
         test_folder,
         files[0]
     )
 
-
-    print(
-        f"Testing image:\n{image_path}"
-    )
+    return image_path
 
 
-    show_gradcam(
-        image_path
-    )
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    print()
+    print("=" * 50)
+    print("GRAD-CAM TEST")
+    print("=" * 50)
+
+    try:
+
+        image_path = find_test_image()
+
+        print()
+        print(
+            "Testing:",
+            image_path
+        )
+
+        output_path = save_gradcam(
+            image_path
+        )
+
+        print()
+        print("SUCCESS!")
+        print()
+        print(
+            "Open this file:"
+        )
+
+        print(
+            output_path
+        )
+
+    except Exception as e:
+
+        print()
+        print("=" * 50)
+        print("ERROR")
+        print("=" * 50)
+
+        print(
+            str(e)
+        )
+
+        import traceback
+
+        traceback.print_exc()
