@@ -1,99 +1,63 @@
 # FinDocAI – Financial Document Tampering Detection
 
-AI-powered financial document analysis system that detects suspicious modifications in receipts and invoices using deep learning.
+AI-powered web application for detecting potential tampering in financial documents such as receipts and invoices using **EfficientNetV2B0** and **Grad-CAM**.
 
-## 📌 Overview
+## 🚀 About the Project
 
-FinDocAI is a web-based application designed to identify potentially tampered financial documents such as receipts and invoices.
+FinDocAI analyzes financial document images and identifies regions that may contain suspicious modifications.
 
-The system uses **EfficientNetV2B0** to analyze document images and **Grad-CAM** to provide a visual explanation of the regions that contributed to the prediction.
+The application uses a trained **EfficientNetV2B0** deep-learning model for image classification and **Grad-CAM** to visualize the regions that contributed to the prediction.
 
-Users can upload a document or capture an image using their device camera and receive an AI-based analysis.
-
----
+Users can upload a document or capture an image using a camera and view the analysis through a web interface.
 
 ## ✨ Features
 
-- 📄 Upload receipt or invoice images
+- 📄 Upload receipt and invoice images
 - 📷 Capture documents using a camera
 - 🤖 AI-based tampering detection
 - 🧠 EfficientNetV2B0 deep-learning model
-- 🔍 Document region / tile analysis
+- 🔍 Document region analysis
 - 🌡️ Grad-CAM visualization
 - 📊 Prediction confidence
-- 🖥️ Interactive Flask web interface
-- 📱 Responsive web design
-- 📑 Separate pages for detection, methodology, performance and project information
+- 🖥️ Flask-based web application
+- 📱 Responsive HTML & CSS interface
+- 📑 Multiple application pages
 
----
+## 🛠️ Tech Stack
 
-## 🧠 Technologies Used
-
-### Frontend
-
+**Frontend**
 - HTML5
 - CSS3
 - JavaScript
 
-### Backend
-
+**Backend**
 - Python
 - Flask
 
-### Machine Learning
-
+**Machine Learning**
 - TensorFlow
 - Keras
 - EfficientNetV2B0
 - Grad-CAM
 - NumPy
 
-### Image Processing
-
-- Pillow (PIL)
+**Image Processing**
+- Pillow
 - Matplotlib
 
----
-
-## 🏗️ System Architecture
+## 🧠 How It Works
 
 ```text
-                ┌─────────────────────┐
-                │       User          │
-                └──────────┬──────────┘
-                           │
-                           ▼
-                ┌─────────────────────┐
-                │ Upload / Camera     │
-                │ Document Image      │
-                └──────────┬──────────┘
-                           │
-                           ▼
-                ┌─────────────────────┐
-                │ Image Preprocessing │
-                └──────────┬──────────┘
-                           │
-                           ▼
-                ┌─────────────────────┐
-                │ Document Tiling     │
-                └──────────┬──────────┘
-                           │
-                           ▼
-                ┌─────────────────────┐
-                │ EfficientNetV2B0    │
-                │ Classification      │
-                └──────────┬──────────┘
-                           │
-                 ┌─────────┴─────────┐
-                 ▼                   ▼
-        ┌─────────────────┐  ┌─────────────────┐
-        │ Prediction      │  │ Grad-CAM        │
-        │ Probability     │  │ Explanation     │
-        └────────┬────────┘  └────────┬────────┘
-                 │                    │
-                 └──────────┬─────────┘
-                            ▼
-                 ┌─────────────────────┐
-                 │ Final Result        │
-                 │ Genuine / Tampered  │
-                 └─────────────────────┘
+Upload / Capture Document
+          ↓
+    Image Preprocessing
+          ↓
+      Document Tiling
+          ↓
+     EfficientNetV2B0
+          ↓
+   Tampering Prediction
+          ↓
+      Grad-CAM
+          ↓
+ Suspicious Region + Result
